@@ -26,24 +26,6 @@
     padding-top: 50px;
   }
 
-  .todo-item {
-    padding: 10px;
-    margin: 10px 0;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-  }
-
-  .todo-text {
-    font-size: 18px;
-    font-weight: bold;
-  }
-
-  .todo-categories {
-    font-size: 12px;
-    color: #666;
-    margin-top: 5px;
-  }
-
   .category-badge {
     background-color: #42a5f5;
     color: white;
@@ -52,11 +34,6 @@
     font-size: 11px;
     display: inline-block;
     margin: 2px;
-  }
-
-  .done {
-    text-decoration: line-through;
-    color: #999;
   }
 {% endblock %}
 
@@ -81,51 +58,38 @@
     </div>
   </form>
 
-  <!-- Display Todos -->
-  <div id="result" style="margin-top: 20px;">
-    {% if todos %}
-      {% for todo in todos %}
-      <div class="todo-item">
-        <div class="todo-text {% if todo.done %}done{% endif %}">
-          {{ todo.text }}
-        </div>
-        
-        <!-- Display Categories for each todo -->
-        <div class="todo-categories">
-          <strong>Categories:</strong>
-          {% if todo.categories %}
-            {% for category in todo.categories %}
-              <span class="category-badge">{{ category.text }}</span>
-            {% endfor %}
-          {% else %}
-            <span style="color: #999;">No categories</span>
-          {% endif %}
-        </div>
-        
-        <!-- Todo Actions -->
-        <div style="margin-top: 10px;">
-          {% if not todo.done %}
-          <form method="POST" action="/todo/{{ todo.id }}/complete" style="display: inline;">
-            <button type="submit" class="btn green btn-small">Complete</button>
-          </form>
-          {% else %}
-          <form method="POST" action="/todo/{{ todo.id }}/incomplete" style="display: inline;">
-            <button type="submit" class="btn orange btn-small">Undo</button>
-          </form>
-          {% endif %}
-          
-          <form method="POST" action="/todo/{{ todo.id }}/delete" style="display: inline;">
-            <button type="submit" class="btn red btn-small" onclick="return confirm('Are you sure?')">Delete</button>
-          </form>
-        </div>
-      </div>
+  <!-- Task 4.4: Todo List with Categories -->
+  <ul class="collection" id="result">
+      {% for todo in current_user.todos %}
+           <li class="collection-item">
+              <form class="row" method="POST" action="toggle/{{todo.id}}">
+                <span class="card-title">
+                  {{todo.text}}
+                  
+                  <!-- Display Categories for each todo -->
+                  <div class="todo-categories" style="font-size: 12px; margin-top: 5px;">
+                    {% if todo.categories %}
+                      {% for category in todo.categories %}
+                        <span class="category-badge">{{ category.text }}</span>
+                      {% endfor %}
+                    {% else %}
+                      <span style="color: #999; font-size: 11px;">No categories</span>
+                    {% endif %}
+                  </div>
+                  
+                  <label class="right">
+                    <input type="checkbox" name="done" onchange="this.form.submit()" {% if todo.done %} checked {% endif %} />
+                    <span>Done</span>
+                  </label>
+                </span>
+              </form>
+              <div class="row">
+                <a href="/editTodo/{{todo.id}}">EDIT</a>
+                <a href="/deleteTodo/{{todo.id}}">DELETE</a>
+              </div>
+          </li>
       {% endfor %}
-    {% else %}
-      <div class="card-panel grey lighten-3 center">
-        No todos yet! Create one above.
-      </div>
-    {% endif %}
-  </div>
+  </ul>
 </main>
 
 {% endblock %}
