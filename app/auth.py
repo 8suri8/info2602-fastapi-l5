@@ -1,70 +1,87 @@
-from pwdlib import PasswordHash
-from app.models import *
-from app.database import get_session
-from sqlmodel import select
-from datetime import timedelta, datetime, timezone
-from app.database import SessionDep
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import APIRouter, HTTPException, Depends, Request, Form
+from fastapi.responses import RedirectResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from typing import Annotated
-from fastapi import Depends, HTTPException, status, Request
-import jwt
-from jwt.exceptions import InvalidTokenError
+from sqlmodel import select
+from fastapi import status
+from app.database import SessionDep
+from app.models import *
+from app.auth import verify_password, create_access_token, AuthDep, encrypt_password, get_current_user
+from fastapi.templating import Jinja2Templates
+from starlette_flash import flash
 
-SECRET_KEY = "ThisIsAnExampleOfWhatNotToUseAsTheSecretKeyIRL"
-ALGORITHM = "HS256"
+auth_router = APIRouter(tags=["Authentication"])
+templates = Jinja2Templates(directory="templates")
 
-password_hash = PasswordHash.recommended()
+@auth_router.get("/login")
+def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
 
-# Converts plaintext password to encrypted password
-def encrypt_password(password:str):
-    return password_hash.hash(password)
+@auth_router.post("/login")
+async def login_action(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    db: SessionDep,
+    request: Request
+) -> Response:
+    # Try logging in as RegularUser
+    user = db.exec(select(RegularUser).where(RegularUser.username == form_data.username)).one_or_none()
+    if not user or not verify_password(plaintext_password=form_data.password, encrypted_password=user.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = create_access_token(data={"sub": f"{user.id}", "role": user.role})
 
-# Verifies if a plaintext password, when encrypted, gives the same output as the expected encrypted password
-def verify_password(plaintext_password:str, encrypted_password):
-    return password_hash.verify(password=plaintext_password, hash=encrypted_password)
+    max_age = 1 * 24 * 60 * 60  # 1 day in seconds
+    response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    response.set_cookie(key="access_token", value=f"Bearer {access_token}", httponly=True, max_age=max_age, samesite="lax")
+    flash(request, "Logged in successfully")
 
-# This takes some information and converts it into a JWT
-def create_access_token(data: dict, expires_delta: timedelta = timedelta(minutes=15)):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return response
 
-# Gets the current user who is making the request
-async def get_current_user(request:Request, db:SessionDep)->User:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    auth_header = request.headers.get("Authorization")
-    auth_cookie = request.cookies.get("access_token")
+@auth_router.get("/logout")
+async def logout(request: Request):
+    """
+    Logs out the user by clearing the access token cookie
+    """
+    response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie("access_token")
+    flash(request, "Logged out successfully")
+    return response
 
-    token = None
-    if auth_header and auth_header.startswith("Bearer "): # Regular auth
-        token = auth_header.split(" ")[1]
-    elif auth_cookie: # Web auth
-        token = auth_cookie.split(" ")[1]
+@auth_router.get("/signup")
+def signup_page(request: Request):
+    return templates.TemplateResponse("signup.html", {"request": request})
+
+@auth_router.post('/signup')
+def signup_user(
+    request: Request, 
+    db: SessionDep, 
+    username: Annotated[str, Form()], 
+    email: Annotated[str, Form()], 
+    password: Annotated[str, Form()],
+):
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub",None)
-    except InvalidTokenError:
-        raise credentials_exception
-    user = db.get(User,user_id)
-
-    if user is None:
-        raise credentials_exception
-    return user
-
-async def is_logged_in(request: Request, db:SessionDep):
-    try:
-        await get_current_user(request, db)
-        return True
+        new_user = RegularUser(
+            username=username, 
+            email=email, 
+            password=encrypt_password(password)
+        )
+        db.add(new_user)
+        db.commit()
+        flash(request, "Registration completed! Sign in now!")
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     except Exception as e:
         print(e)
-        return False
+        db.rollback()
+        raise HTTPException(
+                    status_code=400,
+                    detail="Username or email already exists",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
-IsUserLoggedIn = Annotated[bool, Depends(is_logged_in)]
-AuthDep = Annotated[User, Depends(get_current_user)]
+@auth_router.get("/identify", response_model=UserResponse)
+def get_user_by_id(db: SessionDep, user: AuthDep):
+    return user
